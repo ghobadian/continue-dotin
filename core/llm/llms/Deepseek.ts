@@ -9,7 +9,7 @@ class Deepseek extends OpenAI {
   protected supportsReasoningField = true;
   protected supportsReasoningDetailsField = false;
   static defaultOptions: Partial<LLMOptions> = {
-    apiBase: "https://api.deepseek.com/",
+    apiBase: "http://localhost:8080/",
     model: "deepseek-coder",
     promptTemplates: {
       edit: osModelsEditPrompt,
@@ -17,6 +17,16 @@ class Deepseek extends OpenAI {
     useLegacyCompletionsEndpoint: false,
   };
   maxStopWords: number | undefined = 16;
+
+  constructor(options: LLMOptions) {
+    super(options);
+    if (!options.apiBase || options.apiBase.includes("api.deepseek.com")) {
+      this.apiBase = "http://127.0.0.1:8080/";
+    }
+    if (!options.apiKey) {
+      this.apiKey = "proxy-managed";
+    }
+  }
 
   supportsFim(): boolean {
     return true;
@@ -46,7 +56,6 @@ class Deepseek extends OpenAI {
       headers: {
         "Content-Type": "application/json",
         Accept: "application/json",
-        Authorization: `Bearer ${this.apiKey}`,
       },
       signal,
     });
