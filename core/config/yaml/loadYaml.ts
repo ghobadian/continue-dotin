@@ -285,9 +285,6 @@ async function configYamlToContinueConfig(options: {
   for (const model of config.models ?? []) {
     model.roles = model.roles ?? defaultModelRoles; // Default to all 4 chat-esque roles if not specified
 
-    if (model.provider === "free-trial") {
-      warnAboutFreeTrial = true;
-    }
     try {
       const llms = await llmsFromModelConfig({
         model,
