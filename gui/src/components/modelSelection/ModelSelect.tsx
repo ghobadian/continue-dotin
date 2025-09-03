@@ -24,6 +24,8 @@ import {
   ListboxOption,
   ListboxOptions,
 } from "../ui/Listbox";
+import { cn } from "../../util/cn";
+import { useFontSize } from "../ui";
 
 interface ModelOptionProps {
   option: Option;
@@ -107,6 +109,9 @@ function ModelSelect() {
   const [options, setOptions] = useState<Option[]>([]);
   const [sortedOptions, setSortedOptions] = useState<Option[]>([]);
   const { selectedProfile } = useAuth();
+  const configLoading = useAppSelector((store) => store.config.loading);
+  const tinyFont = useFontSize(-4);
+  const { refreshProfiles } = useAuth();
 
   let selectedModel = null;
   let allModels = null;
@@ -233,6 +238,29 @@ function ModelSelect() {
         <ListboxOptions className="min-w-[160px]">
           <div className="flex items-center justify-between gap-1 px-2 py-1">
             <span className="font-semibold">Models</span>
+
+            <ListboxOption
+              value="reload-assistant"
+              fontSizeModifier={-2}
+              className="border-border border-b px-2 py-1.5"
+              onClick={() =>
+                refreshProfiles("Manual refresh from assistant list")
+              }
+            >
+              <span
+                className="text-description flex flex-row items-center"
+                style={{ fontSize: tinyFont }}
+              >
+                <ArrowPathIcon
+                  className={cn(
+                    "mr-1 h-3 w-3",
+                    configLoading && "animate-spin-slow",
+                  )}
+                />
+                Reload assistants
+              </span>
+            </ListboxOption>
+
             <Cog6ToothIcon
               className="text-description h-3 w-3 cursor-pointer hover:brightness-125"
               onClick={() =>
@@ -267,33 +295,33 @@ function ModelSelect() {
             )}
           </div>
 
-          {!isConfigLoading && selectedProfile?.profileType === "local" && (
-            <ListboxOption
-              key={options.length}
-              onClick={onClickAddModel}
-              value={"addModel" as any}
-              className="border-border border-x-0 border-y border-solid"
-            >
-              <div
-                className="text-description flex items-center py-0.5 hover:text-inherit"
-                style={{
-                  fontSize: fontSize(-3),
-                }}
-              >
-                <PlusIcon className="mr-2 h-3 w-3" />
-                Add Chat model
-              </div>
-            </ListboxOption>
-          )}
+          {/*{!isConfigLoading && selectedProfile?.profileType === "local" && (*/}
+          {/*  <ListboxOption*/}
+          {/*    key={options.length}*/}
+          {/*    onClick={onClickAddModel}*/}
+          {/*    value={"addModel" as any}*/}
+          {/*    className="border-border border-x-0 border-y border-solid"*/}
+          {/*  >*/}
+          {/*    <div*/}
+          {/*      className="text-description flex items-center py-0.5 hover:text-inherit"*/}
+          {/*      style={{*/}
+          {/*        fontSize: fontSize(-3),*/}
+          {/*      }}*/}
+          {/*    >*/}
+          {/*      <PlusIcon className="mr-2 h-3 w-3" />*/}
+          {/*      Add Chat model*/}
+          {/*    </div>*/}
+          {/*  </ListboxOption>*/}
+          {/*)}*/}
 
-          {!isConfigLoading && (
-            <div
-              className="text-description-muted px-2 py-1"
-              style={{ fontSize: fontSize(-3) }}
-            >
-              <code>{getMetaKeyLabel()}'</code> to toggle model
-            </div>
-          )}
+          {/*{!isConfigLoading && (*/}
+          {/*  <div*/}
+          {/*    className="text-description-muted px-2 py-1"*/}
+          {/*    style={{ fontSize: fontSize(-3) }}*/}
+          {/*  >*/}
+          {/*    <code>{getMetaKeyLabel()}'</code> to toggle model*/}
+          {/*  </div>*/}
+          {/*)}*/}
         </ListboxOptions>
       </div>
     </Listbox>
