@@ -195,39 +195,6 @@ export function BlockSettingsTopToolbar() {
 
   return (
     <div className="flex flex-1 items-center justify-between gap-2">
-      <div className="flex flex-row">
-        <div className="xs:flex text-description hidden items-center justify-center gap-0.5">
-          <BlockSettingsToolbarIcon
-            className="-ml-1.5"
-            icon={isToolbarExpanded ? ChevronLeftIcon : EllipsisHorizontalIcon}
-            tooltip={isToolbarExpanded ? "Collapse Toolbar" : "Expand Toolbar"}
-            title=""
-            isSelected={false}
-            onClick={handleEllipsisClick}
-          />
-          <div
-            className={`${isToolbarExpanded ? "w-min" : "w-0"} flex overflow-hidden transition-all duration-200`}
-          >
-            <div className="flex">
-              {visibleSections.map((section) => (
-                <BlockSettingsToolbarIcon
-                  key={section.id}
-                  sectionId={section.id}
-                  icon={section.icon}
-                  tooltip={section.tooltip}
-                  title={section.title}
-                  isSelected={selectedSection === section.id}
-                  onClick={() =>
-                    setSelectedSection(
-                      selectedSection === section.id ? null : section.id,
-                    )
-                  }
-                />
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
       <div className="flex gap-0.5">
         <HoverItem
           data-tooltip-id="assistant-select-tooltip"

@@ -1,0 +1,12 @@
+- [x] run continue plugin locally 
+- [x] try connecting plugin to deepseek llm 
+- [x] remove unnecessary buttons from GUI
+- [x] move api keys to proxy server for security
+- [ ] customize llm temperature
+- [ ] customize llm max number of input and output tokens
+- [ ] test the mcp functionality. (useful for connecting other data sources (jira, confluence) to the plugin)
+- [ ] test the vector database functionality. (useful for plugin to understand the whole project before answering)
+- [ ] compare continue plugin with claude code. (both are compatible with deepseek)
+- [x] Test plugin memory functionality in chat ([evidence](pics/memory.png))
+- [ ] Fix agent functionlity. It think it doesn't use the tools. (i.e. searching files, editing files)
+- [ ] Fix plan functionlity. It think it doesn't use the tools and mcp server

@@ -20,7 +20,7 @@ export class ContinueHubClient implements IContinueHubClient {
 
   constructor(options: ContinueHubClientOptions) {
     this.apiKey = options.apiKey;
-    this.apiBase = options.apiBase ?? "https://api.continue.dev";
+    this.apiBase = options.apiBase ?? "http://localhost:8080/";
     this.fetchOptions = options.fetchOptions;
   }
 
