@@ -6,6 +6,8 @@ import OpenAI from "./OpenAI.js";
 
 class Deepseek extends OpenAI {
   static providerName = "deepseek";
+  protected supportsReasoningField = true;
+  protected supportsReasoningDetailsField = false;
   static defaultOptions: Partial<LLMOptions> = {
     apiBase: "http://localhost:8080/",
     model: "deepseek-coder",

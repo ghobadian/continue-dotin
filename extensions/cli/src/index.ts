@@ -19,9 +19,75 @@ import {
 import { configureConsoleForHeadless, safeStderr } from "./init.js";
 import { sentryService } from "./sentry.js";
 import { addCommonOptions, mergeParentOptions } from "./shared-options.js";
+import { posthogService } from "./telemetry/posthogService.js";
+import { gracefulExit } from "./util/exit.js";
 import { logger } from "./util/logger.js";
 import { readStdinSync } from "./util/stdin.js";
 import { getVersion } from "./version.js";
+
+// TUI lifecycle and two-stage exit state management
+let tuiUnmount: (() => void) | null;
+let showExitMessage: boolean;
+let exitMessageCallback: (() => void) | null;
+let lastCtrlCTime: number;
+
+// Initialize state immediately to avoid temporal dead zone issues with exported functions
+(function initializeTUIState() {
+  tuiUnmount = null;
+  showExitMessage = false;
+  exitMessageCallback = null;
+  lastCtrlCTime = 0;
+})();
+
+// Register TUI cleanup function for graceful shutdown
+export function setTUIUnmount(unmount: () => void) {
+  tuiUnmount = unmount;
+}
+
+// Register callback to trigger UI updates when exit message state changes
+export function setExitMessageCallback(callback: () => void) {
+  exitMessageCallback = callback;
+}
+
+// Sets up SIGINT handler that requires double Ctrl+C within 1 second to exit
+export function enableSigintHandler() {
+  // Remove all existing SIGINT listeners first
+  process.removeAllListeners("SIGINT");
+
+  process.on("SIGINT", async () => {
+    const now = Date.now();
+    const timeSinceLastCtrlC = now - lastCtrlCTime;
+
+    if (timeSinceLastCtrlC <= 1000 && lastCtrlCTime !== 0) {
+      // Second Ctrl+C within 1 second - exit
+      showExitMessage = false;
+      if (tuiUnmount) {
+        tuiUnmount();
+      }
+      await gracefulExit(0);
+    } else {
+      // First Ctrl+C or too much time elapsed - show exit message
+      lastCtrlCTime = now;
+      showExitMessage = true;
+      if (exitMessageCallback) {
+        exitMessageCallback();
+      }
+
+      // Hide message after 1 second
+      setTimeout(() => {
+        showExitMessage = false;
+        if (exitMessageCallback) {
+          exitMessageCallback();
+        }
+      }, 1000);
+    }
+  });
+}
+
+// Check if "ctrl+c to exit" message should be displayed
+export function shouldShowExitMessage(): boolean {
+  return showExitMessage;
+}
 
 // Add global error handlers to prevent uncaught errors from crashing the process
 process.on("unhandledRejection", (reason, promise) => {
@@ -41,6 +107,11 @@ process.on("uncaughtException", (error) => {
   // Don't exit the process, just log the error
 });
 
+// keyboard interruption handler for non-TUI flows
+process.on("SIGINT", async () => {
+  await gracefulExit(130);
+});
+
 const program = new Command();
 
 program
@@ -48,7 +119,7 @@ program
   .description(
     "Continue CLI - AI-powered development assistant. Starts an interactive session by default, use -p/--print for non-interactive output.",
   )
-  .version(getVersion());
+  .version(getVersion(), "-v, --version", "Display version number");
 
 // Root command - chat functionality (default)
 // Add common options to the root command
@@ -66,6 +137,8 @@ addCommonOptions(program)
   .option("--resume", "Resume from last session")
   .option("--fork <sessionId>", "Fork from an existing session ID")
   .action(async (prompt, options) => {
+    // Telemetry: record command invocation
+    await posthogService.capture("cliCommand", { command: "cn" });
     // Handle piped input - detect it early and decide on mode
     let stdinInput = null;
 
@@ -143,16 +216,19 @@ addCommonOptions(program)
       }
     }
 
-    // In headless mode, ensure we have a prompt
-    if (options.print && !prompt) {
+    // In headless mode, ensure we have a prompt unless using --agent flag
+    // Agent files can provide their own prompts
+    if (options.print && !prompt && !options.agent) {
       safeStderr(
-        "Error: A prompt is required when using the -p/--print flag.\n\n",
+        "Error: A prompt is required when using the -p/--print flag, unless --prompt or --agent is provided.\n\n",
       );
       safeStderr("Usage examples:\n");
       safeStderr('  cn -p "please review my current git diff"\n');
       safeStderr('  echo "hello" | cn -p\n');
       safeStderr('  cn -p "analyze the code in src/"\n');
-      process.exit(1);
+      safeStderr("  cn -p --agent my-org/my-agent\n");
+      safeStderr("  cn -p --prompt my-org/my-prompt\n");
+      await gracefulExit(1);
     }
 
     // Map --print to headless mode
@@ -166,6 +242,8 @@ program
   .command("login")
   .description("Authenticate with Continue")
   .action(async () => {
+    // Telemetry: record command invocation
+    await posthogService.capture("cliCommand", { command: "login" });
     await login();
   });
 
@@ -174,6 +252,8 @@ program
   .command("logout")
   .description("Log out from Continue")
   .action(async () => {
+    // Telemetry: record command invocation
+    await posthogService.capture("cliCommand", { command: "logout" });
     await logout();
   });
 
@@ -183,18 +263,26 @@ program
   .description("List recent chat sessions and select one to resume")
   .option("--json", "Output in JSON format")
   .action(async (options) => {
+    // Telemetry: record command invocation
+    await posthogService.capture("cliCommand", { command: "ls" });
     await listSessionsCommand({
       format: options.json ? "json" : undefined,
     });
   });
 
 // Remote subcommand
-program
-  .command("remote [prompt]", { hidden: true })
-  .description("Launch a remote instance of the cn agent")
+addCommonOptions(
+  program
+    .command("remote [prompt]", { hidden: true })
+    .description("Launch a remote instance of the cn agent"),
+)
   .option(
     "--url <url>",
     "Connect directly to the specified URL instead of creating a new remote environment",
+  )
+  .option(
+    "--id <id>",
+    "Connect to an existing remote agent by id and establish a tunnel",
   )
   .option(
     "--idempotency-key <key>",
@@ -213,6 +301,11 @@ program
     "Specify the repository URL to use in the remote environment",
   )
   .action(async (prompt: string | undefined, options) => {
+    // Telemetry: record command invocation
+    await posthogService.capture("cliCommand", {
+      command: "remote",
+      flagS: options.start,
+    });
     await remote(prompt, options);
   });
 
@@ -226,7 +319,13 @@ program
     "300",
   )
   .option("--port <port>", "Port to run the server on (default: 8000)", "8000")
+  .option(
+    "--id <storageId>",
+    "Upload session snapshots to Continue-managed storage using the provided identifier",
+  )
   .action(async (prompt, options) => {
+    // Telemetry: record command invocation
+    await posthogService.capture("cliCommand", { command: "serve" });
     // Merge parent options with subcommand options
     const mergedOptions = mergeParentOptions(program, options);
 
@@ -244,6 +343,8 @@ program
   .description("Test remote TUI mode with a local server")
   .option("--url <url>", "Server URL (default: http://localhost:8000)")
   .action(async (prompt: string | undefined, options) => {
+    // Telemetry: record command invocation
+    await posthogService.capture("cliCommand", { command: "remote-test" });
     await remoteTest(prompt, options.url);
   });
 
@@ -251,27 +352,22 @@ program
 program.on("command:*", () => {
   console.error(`Error: Unknown command '${program.args.join(" ")}'\n`);
   program.outputHelp();
-  process.exit(1);
+  void gracefulExit(1);
 });
 
-// Parse arguments and handle errors
-try {
-  program.parse();
-} catch (error) {
-  console.error(error);
-  sentryService.captureException(
-    error instanceof Error ? error : new Error(String(error)),
-  );
-  process.exit(1);
+export async function runCli(): Promise<void> {
+  // Parse arguments and handle errors
+  try {
+    program.parse();
+  } catch (error) {
+    console.error(error);
+    sentryService.captureException(
+      error instanceof Error ? error : new Error(String(error)),
+    );
+    process.exit(1);
+  }
+
+  process.on("SIGTERM", async () => {
+    await gracefulExit(0);
+  });
 }
-
-// Graceful shutdown - flush Sentry data
-process.on("SIGINT", async () => {
-  await sentryService.flush();
-  process.exit(0);
-});
-
-process.on("SIGTERM", async () => {
-  await sentryService.flush();
-  process.exit(0);
-});

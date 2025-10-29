@@ -1,31 +1,28 @@
 import {
   ArrowPathIcon,
-  CheckIcon,
   ChevronDownIcon,
   Cog6ToothIcon,
   CubeIcon,
   PlusIcon,
 } from "@heroicons/react/24/outline";
-import { useContext, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../context/Auth";
-import { IdeMessengerContext } from "../../context/IdeMessenger";
 import { AddModelForm } from "../../forms/AddModelForm";
 import { useAppDispatch, useAppSelector } from "../../redux/hooks";
 import { setDialogMessage, setShowDialog } from "../../redux/slices/uiSlice";
 import { updateSelectedModelByRole } from "../../redux/thunks/updateSelectedModelByRole";
+import { getMetaKeyLabel, isMetaEquivalentKeyPressed } from "../../util";
+import { CONFIG_ROUTES } from "../../util/navigation";
 import {
-  fontSize,
-  getMetaKeyLabel,
-  isMetaEquivalentKeyPressed,
-} from "../../util";
-import {
+  Button,
   Listbox,
   ListboxButton,
   ListboxOption,
   ListboxOptions,
-} from "../ui/Listbox";
-import { cn } from "../../util/cn";
-import { useFontSize } from "../ui";
+  useFontSize,
+} from "../ui";
+import { Divider } from "../ui/Divider";
 
 interface ModelOptionProps {
   option: Option;
@@ -53,17 +50,33 @@ function modelSelectTitle(model: any): string {
   return model?.class_name;
 }
 
+/**makeshift way to close the headlessui listbox due to absence of open state on the listbox */
+function closeDropDown(button: HTMLButtonElement | null) {
+  if (!button) return;
+  button.classList.add("hidden");
+  setTimeout(() => {
+    button.classList.remove("hidden");
+  });
+}
+
 function ModelOption({
   option,
   idx,
   showMissingApiKeyMsg,
   isSelected,
 }: ModelOptionProps) {
+  const navigate = useNavigate();
+
   function handleOptionClick(e: any) {
     if (showMissingApiKeyMsg) {
       e.preventDefault();
       e.stopPropagation();
     }
+  }
+
+  function handleConfigureClick(e: React.MouseEvent) {
+    e.stopPropagation();
+    navigate(CONFIG_ROUTES.MODELS);
   }
 
   return (
@@ -72,9 +85,10 @@ function ModelOption({
       disabled={showMissingApiKeyMsg}
       value={option.value}
       onClick={handleOptionClick}
+      className={`group ${isSelected ? "bg-list-active text-list-active-foreground" : ""}`}
     >
-      <div className="flex w-full items-center justify-between">
-        <div className="flex items-center gap-2">
+      <div className="flex w-full items-center justify-between gap-5">
+        <div className="flex items-center gap-2 py-0.5">
           <CubeIcon className="h-3 w-3 flex-shrink-0" />
           <span className="line-clamp-1">
             {option.title}
@@ -90,9 +104,14 @@ function ModelOption({
             )}
           </span>
         </div>
-        <CheckIcon
-          className={`h-3 w-3 flex-shrink-0 ${isSelected ? "" : "invisible"}`}
-        />
+        <Button
+          variant="ghost"
+          size="sm"
+          className="text-description-muted hover:enabled:text-foreground my-0 h-4 w-4 p-0 opacity-0 transition-opacity group-hover:opacity-100"
+          onClick={handleConfigureClick}
+        >
+          <Cog6ToothIcon className="h-3.5 w-3.5" />
+        </Button>
       </div>
     </ListboxOption>
   );
@@ -100,18 +119,16 @@ function ModelOption({
 
 function ModelSelect() {
   const dispatch = useAppDispatch();
+  const navigate = useNavigate();
 
   const isInEdit = useAppSelector((store) => store.session.isInEdit);
   const config = useAppSelector((state) => state.config.config);
   const isConfigLoading = useAppSelector((state) => state.config.loading);
-  const ideMessenger = useContext(IdeMessengerContext);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const [options, setOptions] = useState<Option[]>([]);
   const [sortedOptions, setSortedOptions] = useState<Option[]>([]);
   const { selectedProfile } = useAuth();
-  const configLoading = useAppSelector((store) => store.config.loading);
   const tinyFont = useFontSize(-4);
-  const { refreshProfiles } = useAuth();
 
   let selectedModel = null;
   let allModels = null;
@@ -190,10 +207,8 @@ function ModelSelect() {
     e.stopPropagation();
     e.preventDefault();
 
-    // Close the dropdown
-    if (buttonRef.current) {
-      buttonRef.current.click();
-    }
+    closeDropDown(buttonRef.current);
+
     dispatch(setShowDialog(true));
     dispatch(
       setDialogMessage(
@@ -204,6 +219,15 @@ function ModelSelect() {
         />,
       ),
     );
+  }
+
+  function onClickConfigureModels(e: React.MouseEvent) {
+    e.stopPropagation();
+    e.preventDefault();
+
+    closeDropDown(buttonRef.current);
+
+    navigate(CONFIG_ROUTES.MODELS);
   }
 
   const hasNoModels = allModels?.length === 0;
@@ -236,40 +260,21 @@ function ModelSelect() {
           />
         </ListboxButton>
         <ListboxOptions className="min-w-[160px]">
-          <div className="flex items-center justify-between gap-1 px-2 py-1">
-            <span className="font-semibold">Models</span>
-
-            <ListboxOption
-              value="reload-assistant"
-              fontSizeModifier={-2}
-              className="border-border border-b px-2 py-1.5"
-              onClick={() =>
-                refreshProfiles("Manual refresh from assistant list")
-              }
-            >
-              <span
-                className="text-description flex flex-row items-center"
-                style={{ fontSize: tinyFont }}
+          <div className="flex items-center justify-between px-1.5 py-1">
+            <span className="text-description text-xs font-medium">Models</span>
+            <div className="flex items-center gap-0.5">
+              <Button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onClickConfigureModels(e);
+                }}
+                variant="ghost"
+                size="sm"
+                className="my-0 h-5 w-5 p-0"
               >
-                <ArrowPathIcon
-                  className={cn(
-                    "mr-1 h-3 w-3",
-                    configLoading && "animate-spin-slow",
-                  )}
-                />
-                Reload assistants
-              </span>
-            </ListboxOption>
-
-            <Cog6ToothIcon
-              className="text-description h-3 w-3 cursor-pointer hover:brightness-125"
-              onClick={() =>
-                ideMessenger.post("config/openProfile", {
-                  profileId: undefined,
-                  element: { sourceFile: selectedModel?.sourceFile },
-                })
-              }
-            />
+                <Cog6ToothIcon className="text-description h-3.5 w-3.5" />
+              </Button>
+            </div>
           </div>
 
           <div className="no-scrollbar max-h-[300px] overflow-y-auto">
@@ -295,33 +300,34 @@ function ModelSelect() {
             )}
           </div>
 
-          {/*{!isConfigLoading && selectedProfile?.profileType === "local" && (*/}
-          {/*  <ListboxOption*/}
-          {/*    key={options.length}*/}
-          {/*    onClick={onClickAddModel}*/}
-          {/*    value={"addModel" as any}*/}
-          {/*    className="border-border border-x-0 border-y border-solid"*/}
-          {/*  >*/}
-          {/*    <div*/}
-          {/*      className="text-description flex items-center py-0.5 hover:text-inherit"*/}
-          {/*      style={{*/}
-          {/*        fontSize: fontSize(-3),*/}
-          {/*      }}*/}
-          {/*    >*/}
-          {/*      <PlusIcon className="mr-2 h-3 w-3" />*/}
-          {/*      Add Chat model*/}
-          {/*    </div>*/}
-          {/*  </ListboxOption>*/}
-          {/*)}*/}
+          {!isConfigLoading && (
+            <>
+              {selectedProfile?.profileType === "local" && (
+                <>
+                  <Divider className="!mb-0" />
+                  <ListboxOption
+                    key={options.length}
+                    onClick={onClickAddModel}
+                    value={"addModel" as any}
+                    fontSizeModifier={-2}
+                    className="px-2 py-2"
+                  >
+                    <span className="text-description text-2xs flex flex-row items-center">
+                      <PlusIcon className="mr-1.5 h-3.5 w-3.5" />
+                      Add Chat model
+                    </span>
+                  </ListboxOption>
+                </>
+              )}
 
-          {/*{!isConfigLoading && (*/}
-          {/*  <div*/}
-          {/*    className="text-description-muted px-2 py-1"*/}
-          {/*    style={{ fontSize: fontSize(-3) }}*/}
-          {/*  >*/}
-          {/*    <code>{getMetaKeyLabel()}'</code> to toggle model*/}
-          {/*  </div>*/}
-          {/*)}*/}
+              <Divider className="!my-0" />
+              <div className="text-description flex items-center justify-start p-2">
+                <span className="block" style={{ fontSize: tinyFont }}>
+                  <code>{getMetaKeyLabel()}'</code> to toggle model
+                </span>
+              </div>
+            </>
+          )}
         </ListboxOptions>
       </div>
     </Listbox>

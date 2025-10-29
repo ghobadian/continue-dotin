@@ -1,17 +1,24 @@
 // Helper functions extracted from streamChatResponse.ts to reduce file size
 
+import { ContinueError, ContinueErrorReason } from "core/util/errors.js";
 import { ChatCompletionToolMessageParam } from "openai/resources/chat/completions.mjs";
+
+import { ToolPermissionServiceState } from "src/services/ToolPermissionService.js";
 
 import { checkToolPermission } from "../permissions/permissionChecker.js";
 import { toolPermissionManager } from "../permissions/permissionManager.js";
-import { ToolCallRequest } from "../permissions/types.js";
-import { services } from "../services/index.js";
+import { ToolCallRequest, ToolPermissions } from "../permissions/types.js";
+import {
+  SERVICE_NAMES,
+  serviceContainer,
+  services,
+} from "../services/index.js";
+import { posthogService } from "../telemetry/posthogService.js";
 import { telemetryService } from "../telemetry/telemetryService.js";
 import { calculateTokenCost } from "../telemetry/utils.js";
 import {
   executeToolCall,
-  getAllBuiltinTools,
-  getAvailableTools,
+  getAllAvailableTools,
   Tool,
   validateToolCallArgsPresent,
 } from "../tools/index.js";
@@ -25,11 +32,17 @@ export function handlePermissionDenied(
   toolCall: PreprocessedToolCall,
   chatHistoryEntries: ChatCompletionToolMessageParam[],
   callbacks?: StreamCallbacks,
+  reason: "user" | "policy" = "user",
 ): void {
-  const deniedMessage = `Permission denied by user`;
+  const deniedMessage =
+    reason === "policy"
+      ? `Command blocked by security policy`
+      : `Permission denied by user`;
+
   logger.info("Tool call denied", {
     name: toolCall.name,
     arguments: toolCall.arguments,
+    reason,
   });
 
   chatHistoryEntries.push({
@@ -39,26 +52,7 @@ export function handlePermissionDenied(
   });
 
   callbacks?.onToolResult?.(deniedMessage, toolCall.name, "canceled");
-  logger.debug("Tool call rejected - stopping stream");
-}
-
-// Helper function to handle headless mode permission
-export function handleHeadlessPermission(
-  toolCall: PreprocessedToolCall,
-): never {
-  const allBuiltinTools = getAllBuiltinTools();
-  const tool = allBuiltinTools.find((t) => t.name === toolCall.name);
-  const toolName = tool?.displayName || toolCall.name;
-
-  console.error(
-    `Error: Tool '${toolName}' requires permission but cn is running in headless mode.`,
-  );
-  console.error(`If you want to allow this tool, use --allow ${toolName}.`);
-  console.error(
-    `If you don't want the tool to be included, use --exclude ${toolName}.`,
-  );
-
-  process.exit(1);
+  logger.debug(`Tool call rejected (${reason}) - stopping stream`);
 }
 
 // Helper function to request user permission
@@ -111,25 +105,30 @@ export async function requestUserPermission(
 
 // Helper function to check if tool permission is needed
 export async function checkToolPermissionApproval(
+  permissions: ToolPermissions,
   toolCall: PreprocessedToolCall,
   callbacks?: StreamCallbacks,
   isHeadless?: boolean,
-): Promise<boolean> {
-  const permissionCheck = checkToolPermission(toolCall);
+): Promise<{ approved: boolean; denialReason?: "user" | "policy" }> {
+  const permissionCheck = checkToolPermission(toolCall, permissions);
 
   if (permissionCheck.permission === "allow") {
-    return true;
+    return { approved: true };
   } else if (permissionCheck.permission === "ask") {
     if (isHeadless) {
-      handleHeadlessPermission(toolCall);
+      // "ask" tools are excluded in headless so can only get here by policy evaluation
+      return { approved: false, denialReason: "policy" };
     }
-    return await requestUserPermission(toolCall, callbacks);
+    const userApproved = await requestUserPermission(toolCall, callbacks);
+    return userApproved
+      ? { approved: true }
+      : { approved: false, denialReason: "user" };
   } else if (permissionCheck.permission === "exclude") {
-    // This shouldn't happen as excluded tools are filtered out earlier
-    return false;
+    // Tool blocked by security policy
+    return { approved: false, denialReason: "policy" };
   }
 
-  return false;
+  return { approved: false, denialReason: "policy" };
 }
 
 // Helper function to track first token time
@@ -206,7 +205,7 @@ export function processToolCallDelta(
     toolCallsMap.set(toolCallId, {
       id: toolCallId,
       name: "",
-      arguments: null,
+      arguments: {},
       argumentsStr: "",
       startNotified: false,
     });
@@ -277,6 +276,17 @@ export function recordStreamTelemetry(options: {
     costUsd: cost,
   });
 
+  // Mirror core metrics to PostHog for product analytics
+  try {
+    posthogService.capture("apiRequest", {
+      model: model.model,
+      durationMs: totalDuration,
+      inputTokens,
+      outputTokens,
+      costUsd: cost,
+    });
+  } catch {}
+
   return cost;
 }
 
@@ -287,6 +297,7 @@ export function recordStreamTelemetry(options: {
  * @returns - Preprocessed tool calls that are ready for execution
  */
 export async function preprocessStreamedToolCalls(
+  isHeadless: boolean,
   toolCalls: ToolCall[],
   callbacks?: StreamCallbacks,
 ): Promise<{
@@ -297,12 +308,12 @@ export async function preprocessStreamedToolCalls(
   const errorChatEntries: ChatCompletionToolMessageParam[] = [];
 
   // Get all available tools
-  const availableTools: Tool[] = await getAvailableTools();
 
   // Process each tool call
   for (const toolCall of toolCalls) {
     const startTime = Date.now();
     try {
+      const availableTools: Tool[] = await getAllAvailableTools(isHeadless);
       const tool = availableTools.find((t) => t.name === toolCall.name);
       if (!tool) {
         throw new Error(`Tool ${toolCall.name} not found`);
@@ -329,6 +340,11 @@ export async function preprocessStreamedToolCalls(
       // Notify the UI about the tool start, even though it failed
       callbacks?.onToolStart?.(toolCall.name, toolCall.arguments);
 
+      const errorReason =
+        error instanceof ContinueError
+          ? error.reason
+          : ContinueErrorReason.Unknown;
+
       const errorMessage =
         error instanceof Error ? error.message : String(error);
 
@@ -343,6 +359,15 @@ export async function preprocessStreamedToolCalls(
         success: false,
         durationMs: duration,
         error: errorMessage,
+        errorReason,
+        // modelName, TODO
+      });
+      void posthogService.capture("tool_call_outcome", {
+        succeeded: false,
+        toolName: toolCall.name,
+        errorReason,
+        duration_ms: duration,
+        // model: options.modelName, TODO
       });
 
       // Add error to chat history
@@ -401,18 +426,30 @@ export async function executeStreamedToolCalls(
       // Notify tool start before permission check to display in UI fallbacks
       callbacks?.onToolStart?.(call.name, call.arguments);
 
-      const approved = await checkToolPermissionApproval(
+      // Check tool permissions using helper
+      const permissionState =
+        await serviceContainer.get<ToolPermissionServiceState>(
+          SERVICE_NAMES.TOOL_PERMISSIONS,
+        );
+      const permissionResult = await checkToolPermissionApproval(
+        permissionState.permissions,
         call,
         callbacks,
         isHeadless,
       );
 
-      if (!approved) {
+      if (!permissionResult.approved) {
         // Permission denied: record and mark rejection
+        const denialReason = permissionResult.denialReason || "user";
+        const deniedMessage =
+          denialReason === "policy"
+            ? `Command blocked by security policy`
+            : `Permission denied by user`;
+
         const deniedEntry: ChatCompletionToolMessageParam = {
           role: "tool",
           tool_call_id: call.id,
-          content: `Permission denied by user`,
+          content: deniedMessage,
         };
         entriesByIndex.set(index, deniedEntry);
         callbacks?.onToolResult?.(
